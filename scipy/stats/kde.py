@@ -49,6 +49,12 @@ class gaussian_kde(object):
     a unimodal distribution; bimodal or multi-modal distributions tend to be
     oversmoothed.
 
+    TODO: (for 1D KDEs to start with) allow upper and lower bounds on the KDE.
+    This will essentially involve changing the normalisation in the evaluation
+    function to take account of the fraction of the Gaussians outside the
+    bounds. This will also need to be factored into the integrate_box_1d
+    function.
+
     Parameters
     ----------
     dataset : array_like
