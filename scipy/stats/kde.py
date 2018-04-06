@@ -169,12 +169,25 @@ class gaussian_kde(object):
     >>> plt.show()
 
     """
-    def __init__(self, dataset, bw_method=None):
+    def __init__(self, dataset, bw_method=None, bounds=None):
         self.dataset = atleast_2d(dataset)
         if not self.dataset.size > 1:
             raise ValueError("`dataset` input should have multiple elements.")
-
+     
         self.d, self.n = self.dataset.shape
+
+        self.bounds = bounds
+        if not self.bounds and self.d != 1:
+            raise ValueError("Setting bounds only handles 1D pdfs.")
+        else:
+            if len(self.bounds) != 2:
+                raise ValueError("`bounds` must contain two values.")
+            else:
+                if self.bounds[1] >= self.bounds[2]:
+                    raise ValueError("`bounds` value ordering is incorrect.")
+                elif np.min(self.dataset) < self.bounds[0] or np.max(self.dataset) > self.bounds[1]:
+                    raise ValueError("Some data is out of bounds.")
+
         self.set_bandwidth(bw_method=bw_method)
 
     def evaluate(self, points):
@@ -226,6 +239,11 @@ class gaussian_kde(object):
                 tdiff = dot(self.inv_cov, diff)
                 energy = sum(diff * tdiff, axis=0) / 2.0
                 result[i] = sum(exp(-energy), axis=0)
+
+        # set results outside of bounds to be zero for 1D pdf
+        if self.d == 1 and self.bounds is not None:
+            zpoints = (points[:,0] < self.bounds[0]) && (points[:,0] > self.bounds[1])
+            results[zpoints] = 0.
 
         result = result / self._norm_factor
 
@@ -516,8 +534,26 @@ class gaussian_kde(object):
             self._data_inv_cov = linalg.inv(self._data_covariance)
 
         self.covariance = self._data_covariance * self.factor**2
-        self.inv_cov = self._data_inv_cov / self.factor**2
-        self._norm_factor = sqrt(linalg.det(2*pi*self.covariance)) * self.n
+
+        if self.d == 1 and self.bounds is not None:
+            # calculate normalisation factor accounting for bounds
+            stdev = ravel(sqrt(self.covariance))[0]
+            cov = ravel(self.covariance)[0]
+            self._norm_factor = 0. 
+            for point in self.dataset:
+                stdev = ravel(sqrt(self.covariance))[0]
+
+                normalized_low = (self.bounds[0] - point) / stdev
+                normalized_high = (self.bounds[1] - point) / stdev
+
+                gintegral = special.ndtr(normalized_high) -
+                    special.ndtr(normalized_low))
+
+                # calculate normalisation factor accounting for bounds
+                self._norm_factor += gintegral
+         else:
+             self.inv_cov = self._data_inv_cov / self.factor**2
+             self._norm_factor = sqrt(linalg.det(2*pi*self.covariance)) * self.n
 
     def pdf(self, x):
         """
