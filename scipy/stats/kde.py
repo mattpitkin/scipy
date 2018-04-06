@@ -12,6 +12,8 @@
 #              Contributed to Scipy
 #            2005-10-07 by Robert Kern.
 #              Some fixes to match the new scipy_core
+#            2018-04-09 by Matthew Pitkin
+#              Allow 1d KDEs to have boundaries
 #
 #  Copyright 2004-2005 by Enthought, Inc.
 #
@@ -50,10 +52,7 @@ class gaussian_kde(object):
     oversmoothed.
 
     TODO: (for 1D KDEs to start with) allow upper and lower bounds on the KDE.
-    This will essentially involve changing the normalisation in the evaluation
-    function to take account of the fraction of the Gaussians outside the
-    bounds. This will also need to be factored into the integrate_box_1d
-    function.
+    This will essentially involve reflecting the kernels at the boundaries.
 
     Parameters
     ----------
@@ -232,6 +231,37 @@ class gaussian_kde(object):
                 tdiff = dot(self.inv_cov, diff)
                 energy = sum(diff*tdiff,axis=0) / 2.0
                 result = result + exp(-energy)
+                    
+                # if bounds are present then reflect at the boundaries 
+                # (number of reflections is based on bandwidth)
+                if self.d == 1 and self.bounds is not None:
+                    stdev = ravel(sqrt(self.covariance))[0]
+                    nrefl = 1 # one reflection by default
+                    if not np.any(np.isinf(self.bounds)):
+                        brange = self.bounds[1]-self.bounds[0]
+                        # number of reflections
+                        nrefl = np.floor(5. / (brange / stdev))
+                    deltal = points - self.bounds[0]
+                    deltah = self.bounds[1] - points
+                    
+                    deltas = [[deltal, deltah], [deltah, deltal]]
+                    
+                    for j, bound in enumerate(self.bounds):
+                        if j == 0:
+                            # difference used for reflecting off lower bound
+                            diff = points - self.dataset[:, i, newaxis]
+                        else:
+                            # difference used for reflecting off upper bound
+                            diff = self.dataset[:, i, newaxis] - points
+                    
+                        if np.isfinite(bound):
+                            # reflect off bound
+                            for k in range(nrefl):
+                                diff = diff + 2*deltas[j][k%2]
+
+                                tdiff = dot(self.inv_cov, diff)
+                                energy = sum(diff*tdiff,axis=0) / 2.0
+                                result = result + exp(-energy)
         else:
             # loop over points
             for i in range(m):
@@ -534,26 +564,8 @@ class gaussian_kde(object):
             self._data_inv_cov = linalg.inv(self._data_covariance)
 
         self.covariance = self._data_covariance * self.factor**2
-
-        if self.d == 1 and self.bounds is not None:
-            # calculate normalisation factor accounting for bounds
-            stdev = ravel(sqrt(self.covariance))[0]
-            cov = ravel(self.covariance)[0]
-            self._norm_factor = 0. 
-            for point in self.dataset:
-                stdev = ravel(sqrt(self.covariance))[0]
-
-                normalized_low = (self.bounds[0] - point) / stdev
-                normalized_high = (self.bounds[1] - point) / stdev
-
-                gintegral = special.ndtr(normalized_high) -
-                    special.ndtr(normalized_low))
-
-                # calculate normalisation factor accounting for bounds
-                self._norm_factor += gintegral
-         else:
-             self.inv_cov = self._data_inv_cov / self.factor**2
-             self._norm_factor = sqrt(linalg.det(2*pi*self.covariance)) * self.n
+        self.inv_cov = self._data_inv_cov / self.factor**2
+        self._norm_factor = sqrt(linalg.det(2*pi*self.covariance)) * self.n
 
     def pdf(self, x):
         """
