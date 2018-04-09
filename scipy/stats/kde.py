@@ -30,7 +30,7 @@ from scipy import linalg, special
 from scipy.special import logsumexp
 
 from numpy import atleast_2d, reshape, zeros, newaxis, dot, exp, pi, sqrt, \
-     ravel, power, atleast_1d, squeeze, sum, transpose
+     ones, ravel, power, atleast_1d, squeeze, sum, transpose
 import numpy as np
 from numpy.random import randint, multivariate_normal
 
@@ -178,11 +178,11 @@ class gaussian_kde(object):
         self.bounds = bounds
         if not self.bounds and self.d != 1:
             raise ValueError("Setting bounds only handles 1D pdfs.")
-        else:
+        elif bounds is not None:
             if len(self.bounds) != 2:
                 raise ValueError("`bounds` must contain two values.")
             else:
-                if self.bounds[1] >= self.bounds[2]:
+                if self.bounds[0] >= self.bounds[1]:
                     raise ValueError("`bounds` value ordering is incorrect.")
                 elif np.min(self.dataset) < self.bounds[0] or np.max(self.dataset) > self.bounds[1]:
                     raise ValueError("Some data is out of bounds.")
@@ -230,50 +230,20 @@ class gaussian_kde(object):
                 diff = self.dataset[:, i, newaxis] - points
                 tdiff = dot(self.inv_cov, diff)
                 energy = sum(diff*tdiff,axis=0) / 2.0
-                result = result + exp(-energy)
-                    
-                # if bounds are present then reflect at the boundaries 
-                # (number of reflections is based on bandwidth)
-                if self.d == 1 and self.bounds is not None:
-                    stdev = ravel(sqrt(self.covariance))[0]
-                    nrefl = 1 # one reflection by default
-                    if not np.any(np.isinf(self.bounds)):
-                        brange = self.bounds[1]-self.bounds[0]
-                        # number of reflections
-                        nrefl = np.floor(5. / (brange / stdev))
-                    deltal = points - self.bounds[0]
-                    deltah = self.bounds[1] - points
-                    
-                    deltas = [[deltal, deltah], [deltah, deltal]]
-                    
-                    for j, bound in enumerate(self.bounds):
-                        if j == 0:
-                            # difference used for reflecting off lower bound
-                            diff = points - self.dataset[:, i, newaxis]
-                        else:
-                            # difference used for reflecting off upper bound
-                            diff = self.dataset[:, i, newaxis] - points
-                    
-                        if np.isfinite(bound):
-                            # reflect off bound
-                            for k in range(nrefl):
-                                diff = diff + 2*deltas[j][k%2]
 
-                                tdiff = dot(self.inv_cov, diff)
-                                energy = sum(diff*tdiff,axis=0) / 2.0
-                                result = result + exp(-energy)
+                result = result + self.weights[i]*exp(-energy)
         else:
             # loop over points
             for i in range(m):
                 diff = self.dataset - points[:, i, newaxis]
                 tdiff = dot(self.inv_cov, diff)
                 energy = sum(diff * tdiff, axis=0) / 2.0
-                result[i] = sum(exp(-energy), axis=0)
+                result[i] = sum(self.weights*exp(-energy), axis=0)
 
         # set results outside of bounds to be zero for 1D pdf
         if self.d == 1 and self.bounds is not None:
-            zpoints = (points[:,0] < self.bounds[0]) && (points[:,0] > self.bounds[1])
-            results[zpoints] = 0.
+            zpoints = (points[0,:] > self.bounds[0]) & (points[0,:] < self.bounds[1])
+            result[~zpoints] = 0.
 
         result = result / self._norm_factor
 
@@ -566,6 +536,18 @@ class gaussian_kde(object):
         self.covariance = self._data_covariance * self.factor**2
         self.inv_cov = self._data_inv_cov / self.factor**2
         self._norm_factor = sqrt(linalg.det(2*pi*self.covariance)) * self.n
+
+        # calculate the weights for each point is bounds are present
+        # set weights if there are bounds
+        self.weights = ones((self.n,), dtype=float)
+        if self.d == 1 and self.bounds is not None:
+            stdev = ravel(sqrt(self.covariance))[0]
+            normalized_low = ravel((self.bounds[0] - self.dataset) / stdev)
+            normalized_high = ravel((self.bounds[1] - self.dataset) / stdev)
+
+            for i in range(self.n):
+                self.weights[i] = 1./(special.ndtr(normalized_high[i]) -
+                                      special.ndtr(normalized_low[i]))
 
     def pdf(self, x):
         """
